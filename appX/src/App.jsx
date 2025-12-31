@@ -19,6 +19,7 @@ import Orders from './pages/Orders';
 import Profile from './pages/Profile';
 import Wishlist from './pages/Wishlist';
 
+
 // Admin pages
 import AdminLogin from './admin/pages/AdminLogin';
 import Dashboard from './admin/pages/Dashboard';
@@ -90,6 +91,8 @@ function App() {
                 <Wishlist />
               </ProtectedRoute>
             } />
+
+ 
             
             {/* ========== ADMIN ROUTES ========== */}
             <Route path="/admin/login" element={<AdminLogin />} />

@@ -12,7 +12,12 @@ import {
   Lock,
   ShoppingBag,
   ShieldCheck,
-  ChevronRight
+  ChevronRight,
+  User,
+  Mail,
+  Phone,
+  MapPin,
+  AlertCircle
 } from "lucide-react";
 
 export default function Checkout() {
@@ -21,19 +26,65 @@ export default function Checkout() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const [isSuccess, setIsSuccess] = useState(false);
+  
+  // User details state
+  const [userDetails, setUserDetails] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    address: ""
+  });
+
+  // Helper functions for avatar
+  const getInitials = (name) => {
+    if (!name) return "U";
+    const names = name.split(' ');
+    let initials = names[0].charAt(0).toUpperCase();
+    if (names.length > 1) {
+      initials += names[names.length - 1].charAt(0).toUpperCase();
+    }
+    return initials;
+  };
+
+  const getAvatarColor = (name) => {
+    if (!name) return "bg-indigo-500";
+    const colors = [
+      "bg-indigo-500",
+      "bg-emerald-500",
+      "bg-amber-500",
+      "bg-rose-500",
+      "bg-violet-500"
+    ];
+    const charSum = name.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    const colorIndex = charSum % colors.length;
+    return colors[colorIndex];
+  };
 
   useEffect(() => {
-    const loadCart = async () => {
+    const loadCartAndUser = async () => {
       try {
-        const res = await API.get("/user/cart");
-        setCart(res.data.cart || []);
+        // Load cart
+        const cartRes = await API.get("/user/cart");
+        setCart(cartRes.data.cart || []);
+        
+        // Load user profile details
+        const profileRes = await API.get("/user/auth/me");
+        if (profileRes.data.user) {
+          const user = profileRes.data.user;
+          setUserDetails({
+            name: user.name || "",
+            email: user.email || "",
+            phone: user.phone || "",
+            address: user.address || ""
+          });
+        }
       } catch (err) {
         if (err.response?.status === 401) {
           navigate("/login");
         }
       }
     };
-    loadCart();
+    loadCartAndUser();
   }, [navigate]);
 
   const total = cart.reduce((sum, item) => {
@@ -44,28 +95,68 @@ export default function Checkout() {
   const shippingCost = total > 0 ? 5.00 : 0;
   const grandTotal = total + shippingCost;
 
+  // Check if user has address
+  const hasAddress = userDetails.address && userDetails.address.trim() !== "";
+
   const placeOrder = async () => {
-  if (cart.length === 0) {
-    toast.error("Your cart is empty!");
-    return;
-  }
-  setLoading(true);
-  try {
-    await API.post("/user/orders/place");
-    setIsSuccess(true); 
-  } catch (error) {
-    toast.error("Order failed");
-  } finally {
-    setLoading(false);
-  }
-};
+    if (cart.length === 0) {
+      toast.error("Your cart is empty!");
+      return;
+    }
+    
+    // Check if address is filled
+    if (!hasAddress) {
+      toast.error("Please add your shipping address in profile before placing order");
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const response = await API.post("/user/orders/place");
+      if (response.data.success) {
+        setIsSuccess(true);
+        toast.success("Order placed successfully!");
+        
+        setCart([]);
+        
+        setTimeout(() => {
+          navigate("/orders");
+        }, 2000);
+      } else {
+        toast.error(response.data.message || "Order failed");
+      }
+    } catch (error) {
+      console.error("Order error:", error);
+      toast.error(error.response?.data?.message || "Order failed");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const payWithRazorpay = async () => {
+    if (cart.length === 0) {
+      toast.error("Your cart is empty!");
+      return;
+    }
+    
+    // Check if address is filled
+    if (!hasAddress) {
+      toast.error("Please add your shipping address in profile before placing order");
+      return;
+    }
+    
+    setLoading(true);
     try {
       const { data } = await API.post("/user/orders/razorpay/create", {
-        amount: grandTotal * 100, 
+        amount: grandTotal * 100,
         currency: "INR"
       });
+
+      if (!data.success) {
+        toast.error(data.message || "Payment initialization failed");
+        setLoading(false);
+        return;
+      }
 
       if (typeof window.Razorpay === 'undefined') {
         return new Promise((resolve, reject) => {
@@ -73,47 +164,64 @@ export default function Checkout() {
           script.src = 'https://checkout.razorpay.com/v1/checkout.js';
           script.async = true;
           script.onload = () => {
-            openRazorpay(data);
+            openRazorpay(data.order);
             resolve();
           };
           script.onerror = () => {
             toast.error("Payment service unavailable. Please try COD.");
+            setLoading(false);
             reject();
           };
           document.body.appendChild(script);
         });
       } else {
-        openRazorpay(data);
+        openRazorpay(data.order);
       }
     } catch (error) {
-      toast.error("Payment initialization failed. Try Cash on Delivery.");
+      console.error("Payment error:", error);
+      toast.error(error.response?.data?.message || "Payment initialization failed");
       setLoading(false);
     }
   };
 
-  const openRazorpay = (data) => {
+  const openRazorpay = (orderData) => {
     const options = {
-      key: process.env.REACT_APP_RAZORPAY_KEY || "rzp_test_xxxxxxxxxxxxx",
-      amount: data.amount || (grandTotal * 100),
-      currency: "INR",
+      key: process.env.REACT_APP_RAZORPAY_KEY_ID,
+      amount: orderData.amount,
+      currency: orderData.currency,
       name: "Playora Store",
       description: "Order Payment",
-      order_id: data.id,
+      order_id: orderData.id,
       handler: async (response) => {
         try {
-          await API.post("/user/orders/razorpay/verify", response);
-          setIsSuccess(true);
-          setTimeout(() => {
-            navigate("/orders");
-          }, 1500);
+          const verifyResponse = await API.post("/user/orders/razorpay/verify", {
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature
+          });
+
+          if (verifyResponse.data.success) {
+            setIsSuccess(true);
+            toast.success("Payment successful! Order placed.");
+            
+            // Clear cart from state
+            setCart([]);
+            
+            setTimeout(() => {
+              navigate("/orders");
+            }, 1500);
+          } else {
+            toast.error("Payment verification failed");
+          }
         } catch (error) {
-          toast.error("Payment verification failed");
+          console.error("Verification error:", error);
+          toast.error(error.response?.data?.message || "Payment verification failed");
         }
       },
       prefill: {
-        name: "Customer Name",
-        email: "customer@example.com",
-        contact: "9999999999"
+        name: userDetails.name || "Customer",
+        email: userDetails.email || "customer@example.com",
+        contact: userDetails.phone || "9999999999"
       },
       theme: {
         color: "#6366f1"
@@ -132,10 +240,14 @@ export default function Checkout() {
       const rzp = new window.Razorpay(options);
       rzp.open();
     } catch (error) {
+      console.error("Razorpay open error:", error);
       toast.error("Could not open payment gateway");
       setLoading(false);
     }
   };
+
+  const initials = getInitials(userDetails.name);
+  const avatarColor = getAvatarColor(userDetails.name);
 
   return (
     <div className="min-h-screen bg-[#FBFCFE] pb-20">
@@ -172,6 +284,86 @@ export default function Checkout() {
       <div className="max-w-6xl mx-auto px-6 -mt-12 relative z-20">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-8">
+            {/* User Details Card */}
+            <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 p-8">
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-sm font-black uppercase tracking-widest text-slate-900 flex items-center gap-3">
+                  <User className="w-5 h-5 text-indigo-500" />
+                  Your Details
+                </h2>
+                <button
+                  onClick={() => navigate("/profile")}
+                  className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 text-sm font-bold transition-all group"
+                >
+                  Edit Profile
+                  <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black uppercase tracking-widest text-slate-400 ml-1">Full Name</label>
+                  <div className="flex items-center gap-3 px-4 py-4 bg-[#FBFCFE] border border-slate-50 rounded-2xl">
+                    <div className={`w-8 h-8 rounded-full ${avatarColor} flex items-center justify-center flex-shrink-0`}>
+                      <span className="text-white text-sm font-bold">
+                        {initials}
+                      </span>
+                    </div>
+                    <span className="text-slate-900 font-medium">{userDetails.name || "Not provided"}</span>
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black uppercase tracking-widest text-slate-400 ml-1">Email</label>
+                  <div className="flex items-center gap-3 px-4 py-4 bg-[#FBFCFE] border border-slate-50 rounded-2xl">
+                    <Mail className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                    <span className="text-slate-900 font-medium">{userDetails.email || "Not provided"}</span>
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black uppercase tracking-widest text-slate-400 ml-1">Phone Number</label>
+                  <div className="flex items-center gap-3 px-4 py-4 bg-[#FBFCFE] border border-slate-50 rounded-2xl">
+                    <Phone className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                    <span className="text-slate-900 font-medium">{userDetails.phone || "Not provided"}</span>
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black uppercase tracking-widest text-slate-400 ml-1">Shipping Address</label>
+                  <div className="flex items-start gap-3 px-4 py-4 bg-[#FBFCFE] border border-slate-50 rounded-2xl min-h-[5rem]">
+                    <MapPin className="w-4 h-4 text-slate-300 mt-1 flex-shrink-0" />
+                    <span className="text-slate-900 font-medium leading-relaxed">
+                      {userDetails.address || "Please add your shipping address in profile"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Address Warning */}
+              {!hasAddress && (
+                <div className="mt-6 p-4 bg-amber-50 border border-amber-100 rounded-2xl">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-700 mb-1">
+                        Shipping address required
+                      </p>
+                      <p className="text-sm text-amber-600">
+                        Please add your shipping address in your profile before placing an order.
+                      </p>
+                      <button
+                        onClick={() => navigate("/profile")}
+                        className="mt-2 text-sm font-bold text-amber-700 hover:text-amber-800 underline"
+                      >
+                        Go to Profile →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Order Items Card */}
             <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
               <div className="px-8 py-6 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between">
@@ -303,9 +495,9 @@ export default function Checkout() {
                   if (paymentMethod === "COD") placeOrder();
                   else payWithRazorpay();
                 }}
-                disabled={loading || cart.length === 0}
+                disabled={loading || cart.length === 0 || !hasAddress}
                 className={`w-full flex items-center justify-center gap-3 py-5 rounded-2xl font-bold transition-all duration-300 group ${
-                  loading || cart.length === 0
+                  loading || cart.length === 0 || !hasAddress
                     ? "bg-slate-100 text-slate-400 cursor-not-allowed"
                     : "bg-slate-900 text-white hover:bg-indigo-600 shadow-xl shadow-indigo-100 hover:scale-[1.02]"
                 }`}
@@ -320,6 +512,14 @@ export default function Checkout() {
                 )}
               </button>
 
+              {!hasAddress && (
+                <div className="mt-4 p-3 bg-amber-50 rounded-xl">
+                  <p className="text-xs text-amber-700 font-medium text-center">
+                    Add shipping address in profile to proceed
+                  </p>
+                </div>
+              )}
+
               <div className="mt-8 pt-8 border-t border-slate-50">
                 <p className="text-[10px] text-slate-400 font-bold text-center leading-relaxed">
                   BY PROCEEDING, YOU AGREE TO OUR <br />
@@ -331,39 +531,44 @@ export default function Checkout() {
         </div>
       </div>
       {/* Professional Success Overlay */}
-{isSuccess && (
-  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-    <div className="bg-white rounded-[3rem] p-10 max-w-lg w-full text-center shadow-2xl scale-in-center animate-in fade-in zoom-in duration-300">
-      <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-8 border border-emerald-100">
-        <CheckCircle className="w-12 h-12 text-emerald-500" strokeWidth={1.5} />
-      </div>
-      
-      <h2 className="text-3xl font-serif text-slate-900 mb-2">Order Confirmed</h2>
-      <p className="text-slate-500 font-medium mb-8 leading-relaxed">
-        Thank you for your purchase. Your curated selection is being prepared for shipment.
-      </p>
+      {isSuccess && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-[3rem] p-10 max-w-lg w-full text-center shadow-2xl scale-in-center animate-in fade-in zoom-in duration-300">
+            <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-8 border border-emerald-100">
+              <CheckCircle className="w-12 h-12 text-emerald-500" strokeWidth={1.5} />
+            </div>
+            
+            <h2 className="text-3xl font-serif text-slate-900 mb-2">
+              {paymentMethod === "COD" ? "Order Confirmed!" : "Payment Successful!"}
+            </h2>
+            
+            <p className="text-slate-500 font-medium mb-8 leading-relaxed">
+              {paymentMethod === "COD" 
+                ? "Your order has been placed successfully. You'll pay when the items arrive."
+                : "Payment verified! Your order is being processed."}
+            </p>
 
-      <div className="space-y-3">
-        <button
-          onClick={() => navigate("/orders")}
-          className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl hover:bg-indigo-600 transition-all shadow-lg"
-        >
-          View My Orders
-        </button>
-        <button
-          onClick={() => navigate("/products")}
-          className="w-full bg-white text-slate-500 font-bold py-4 rounded-2xl hover:text-slate-900 transition-all"
-        >
-          Continue Shopping
-        </button>
-      </div>
-      
-      <p className="mt-8 text-[10px] font-black uppercase tracking-widest text-slate-300">
-        A confirmation email has been sent to your inbox
-      </p>
-    </div>
-  </div>
-)}
+            <div className="space-y-3">
+              <button
+                onClick={() => navigate("/orders")}
+                className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl hover:bg-indigo-600 transition-all shadow-lg"
+              >
+                View My Orders
+              </button>
+              <button
+                onClick={() => navigate("/products")}
+                className="w-full bg-white text-slate-500 font-bold py-4 rounded-2xl hover:text-slate-900 transition-all border border-slate-100"
+              >
+                Continue Shopping
+              </button>
+            </div>
+            
+            <p className="mt-8 text-[10px] font-black uppercase tracking-widest text-slate-300">
+              Order details have been sent to your email
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

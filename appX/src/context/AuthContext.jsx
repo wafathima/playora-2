@@ -87,13 +87,53 @@ export const AuthProvider = ({ children }) => {
     clearAuth();
   };
 
+// const updateProfile = async (profileData) => {
+//   const token = localStorage.getItem("token");
+
+//   try {
+//     console.log("Updating profile with:", {
+//       ...profileData,
+//       avatarLength: profileData.avatar?.length
+//     });
+    
+//     const res = await API.put(
+//       "/user/profile",
+//       profileData,
+//       {
+//         headers: {
+//           Authorization: `Bearer ${token}`,
+//           "Content-Type": "application/json"
+//         },
+//       }
+//     );
+
+//     console.log("Profile update response:", res.data);
+
+//     if (res.data.success) {
+//       setUser(res.data.user);
+//       localStorage.setItem("user", JSON.stringify(res.data.user));
+//       return { success: true, message: res.data.message };
+//     } else {
+//       return { success: false, message: res.data.message };
+//     }
+//   } catch (error) {
+//     console.error("Update profile API error:", error);
+//     console.error("Error response:", error.response?.data);
+//     throw error;
+//   }
+// };
+
+// In your updateProfile function
 const updateProfile = async (profileData) => {
   const token = localStorage.getItem("token");
 
   try {
+    // Remove avatar from data sent to backend
+    const { avatar, ...dataToSend } = profileData;
+    
     const res = await API.put(
       "/user/profile",
-      profileData,
+      dataToSend, // Don't send avatar
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -104,40 +144,15 @@ const updateProfile = async (profileData) => {
     if (res.data.success) {
       setUser(res.data.user);
       localStorage.setItem("user", JSON.stringify(res.data.user));
-      return res.data;
+      return { success: true, message: res.data.message };
+    } else {
+      return { success: false, message: res.data.message };
     }
   } catch (error) {
     console.error("Update profile error:", error);
     throw error;
   }
 };
-
-// const updateProfile = async (profileData) => {
-//   const token = localStorage.getItem("token");
-
-//   try {
-//     const res = await API.put(
-//       "/user/profile",
-//       profileData,
-//       {
-//         headers: {
-//           Authorization: `Bearer ${token}`,
-//           'Content-Type': 'application/json', // Explicitly set JSON
-//         },
-//       }
-//     );
-
-//     if (res.data.success) {
-//       setUser(res.data.user);
-//       localStorage.setItem("user", JSON.stringify(res.data.user));
-//       return res.data;
-//     }
-//   } catch (error) {
-//     console.error("Update profile error:", error);
-//     throw error;
-//   }
-// };
-
   return (
     <AuthContext.Provider
       value={{
